@@ -1,0 +1,3 @@
+dest_host: "{{ lookup('env','CLICKHOUSE_LOCAL_IP') | ansible.utils.ipv4 }}"
+clickhouse_user: loger
+clickhouse_password: loger

@@ -1,0 +1,114 @@
+---
+- name: Prepare systems
+  hosts: all
+  tags:
+    - prepare
+  handlers:
+    - name: Reboot system
+      become: true
+      ansible.builtin.reboot:
+  tasks:
+    - name: Disable SELinux
+      become: true
+      ansible.builtin.lineinfile:
+        path: /etc/selinux/config
+        state: present
+        search_string: "SELINUX=enforcing"
+        line: "SELINUX=disabled"
+    - name: Install CentOS firewalld
+      become: true
+      ansible.builtin.yum:
+        name: firewalld
+        state: latest
+    - name: Enable firewalld service
+      become: true
+      ansible.builtin.systemd:
+        name: firewalld
+        enabled: true
+        state: started
+      notify: Reboot system
+- name: Deploy Clickhouse
+  hosts: clickhouse
+  tags: 
+    - clickhouse
+  become: true
+  pre_tasks:
+    - name: Open 8123 clickhouse port
+      ansible.builtin.shell: | 
+        firewall-cmd --zone=public --permanent --add-service=http
+        firewall-cmd --zone=public --permanent --add-port=8123/tcp 
+        firewall-cmd --reload
+  roles:
+    - clickhouse    
+  post_tasks:
+    - name: Set access_mamnagement privileges
+      ansible.builtin.lineinfile:
+        path: /etc/clickhouse-server/users.xml
+        search_string: '            <!-- <access_management>1</access_management> -->'
+        line: '            <access_management>1</access_management>'
+    - name: Create database
+      ansible.builtin.command: clickhouse-client -q "create database {{ database }};"
+      register: create_db
+      failed_when: create_db.rc != 0 and create_db.rc !=82
+      changed_when: create_db.rc == 0
+    - name: Create database user
+      ansible.builtin.command: clickhouse-client -q "CREATE USER IF NOT EXISTS {{ db_user }} HOST IP '{{ resource_host }}' IDENTIFIED WITH sha256_password BY '{{ db_password }}';"
+      changed_when: false
+    - name: Create table
+      ansible.builtin.command: clickhouse-client -q "CREATE TABLE IF NOT EXISTS logs.{{ db_table }} (file String, host String, message String, source_type String, timestamp DateTime64) ENGINE = TinyLog;"
+      changed_when: false
+- name: Deploy Vector
+  hosts: vector
+  tags:
+    - vector
+  roles:
+    - vector-role
+- name: Deploy Lighthouse
+  hosts: lighthouse
+  tags:
+    - lighthouse
+  pre_tasks:
+    - name: Add nginx repository
+      become: true
+      ansible.builtin.yum_repository:
+        name: nginx
+        description: NGINX stable repo
+        baseurl: http://nginx.org/packages/centos/$releasever/$basearch/
+        gpgcheck: true
+        enabled: true
+        gpgkey: https://nginx.org/keys/nginx_signing.key
+        module_hotfixes: true
+    - name: Install nginx
+      become: true
+      ansible.builtin.yum:
+        update_cache: true
+        name: nginx
+    - name: Make site dir
+      become: true
+      ansible.builtin.file:
+        path: /data/www
+        state: directory
+        mode: '0755'
+    - name: Make nginx config file
+      become: true
+      ansible.builtin.template:
+        src: nginx.conf
+        mode: 0644
+        dest: "{{ nginx_conf_dir }}/nginx.conf"
+    - name: Open http port
+      become: true
+      ansible.builtin.shell: | 
+        firewall-cmd --zone=public --permanent --add-service=http 
+        firewall-cmd --reload
+    - name: Set autoboot nginx
+      become: true
+      ansible.builtin.systemd:
+        name: nginx
+        enabled: true
+      notify: Reboot system
+  handlers:
+    - name: Reboot system
+      become: true
+      ansible.builtin.reboot:
+  roles:
+    - lighthouse-role
