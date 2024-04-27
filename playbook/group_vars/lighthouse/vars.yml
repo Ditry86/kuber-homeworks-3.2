@@ -1,3 +1,0 @@
----
-nginx_conf_dir: "/etc/nginx"
-lighthouse_dir: /data/www

@@ -1,6 +1,0 @@
----
-db_user: loger
-db_password: loger
-database: logs
-db_table: test_logs
-resource_host: "{{ lookup('env','VECTOR_LOCAL_IP') | ansible.utils.ipv4 }}"
